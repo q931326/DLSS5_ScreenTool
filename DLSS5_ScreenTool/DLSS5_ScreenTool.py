@@ -42,10 +42,61 @@ def find_ngx_core():
                 return p
     except OSError:
         pass
-    return r"C:\Windows\System32\DriverStore\FileRepository\nvlti.inf_amd64_7566d6b2a7331e4e\nvngx.dll"
+    # 注册表失败时, 在 DriverStore 里扫一遍
+    ds = r"C:\Windows\System32\DriverStore\FileRepository"
+    if os.path.isdir(ds):
+        for root, _dirs, files in os.walk(ds):
+            if "nvngx.dll" in files and "nvngx_dlssnr.dll" not in files:
+                # 排除 dlssnr 文件夹, 优先找仅含 nvngx.dll 的标准驱动位置
+                candidate = os.path.join(root, "nvngx.dll")
+                # 选第一个; 多数机器只会有一个匹配的 NVIDIA 驱动目录
+                return candidate
+        # 没找到纯 NGX 目录, 再退一步: 返回第一个含 nvngx.dll 的位置
+        for root, _dirs, files in os.walk(ds):
+            if "nvngx.dll" in files:
+                return os.path.join(root, "nvngx.dll")
+    raise RuntimeError("找不到 nvngx.dll - 请安装/更新 NVIDIA 驱动 (>= 555.85)")
+
+
+def find_dlssnr_runtime():
+    """定位 nvngx_dlssnr.dll (DLSSNR 运行时, Feature 18)。
+
+    优先级: 项目 runtime/ -> 注册表 NGXCore 同目录 ->
+            Steam/Origin 常见游戏目录 -> DriverStore -> 提示用户。
+    """
+    candidates = []
+    project = os.path.join(APP_DIR, "runtime", "nvngx_dlssnr.dll")
+    candidates.append(project)
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"SOFTWARE\NVIDIA Corporation\Global\NGXCore") as k:
+            path, _ = winreg.QueryValueEx(k, "FullPath")
+            candidates.append(os.path.join(path, "nvngx_dlssnr.dll"))
+    except OSError:
+        pass
+    # Steam 常见游戏目录
+    steam_root = r"C:\Program Files (x86)\Steam\steamapps\common"
+    if os.path.isdir(steam_root):
+        for root, _dirs, files in os.walk(steam_root):
+            if "nvngx_dlssnr.dll" in files:
+                candidates.append(os.path.join(root, "nvngx_dlssnr.dll"))
+                break  # 一个就够了
+    # DriverStore (部分驱动版本自带)
+    ds = r"C:\Windows\System32\DriverStore\FileRepository"
+    if os.path.isdir(ds):
+        for root, _dirs, files in os.walk(ds):
+            if "nvngx_dlssnr.dll" in files:
+                candidates.append(os.path.join(root, "nvngx_dlssnr.dll"))
+                break
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return project  # 返回项目路径, 让上层报错时用户能看到该路径
 
 
 CORE_DLL = find_ngx_core()
+RUNTIME_DLL = find_dlssnr_runtime()
 
 
 class DlssnrSettingsC(ctypes.Structure):
@@ -93,6 +144,17 @@ class Bridge:
     def _session(self, w, h, preset):
         key = (w, h, int(preset))
         if key not in self._sessions:
+            if not os.path.isfile(RUNTIME_DLL):
+                raise RuntimeError(
+                    "DLSSNR 运行时未找到:\n  %s\n"
+                    "请将 nvngx_dlssnr.dll 放入项目的 runtime/ 目录, "
+                    "或确认 RTX 50 系显卡 + 616.56+ 驱动已安装。" % RUNTIME_DLL)
+            if not os.path.isfile(CORE_DLL):
+                raise RuntimeError(
+                    "NGX 核心未找到:\n  %s\n"
+                    "请安装/更新 NVIDIA 驱动 (>= 555.85)。" % CORE_DLL)
+            if w <= 0 or h <= 0:
+                raise RuntimeError("图像尺寸无效: %dx%d" % (w, h))
             # 运行时每进程仅允许一个活会话: 创建前必须先销毁旧会话
             for k, hnd in list(self._sessions.items()):
                 self.dll.dlssnr_destroy(hnd)
@@ -101,8 +163,9 @@ class Bridge:
             handle = self.dll.dlssnr_create(RUNTIME_DLL, CORE_DLL, w, h, 0,
                                             int(preset), err, 1024)
             if not handle:
-                raise RuntimeError("DLSS5 会话创建失败: %s" %
-                                   err.value.decode(errors="replace"))
+                raise RuntimeError("DLSS5 会话创建失败: %s\n  RUNTIME=%s\n  CORE=%s\n  SIZE=%dx%d" %
+                                   (err.value.decode(errors="replace"),
+                                    RUNTIME_DLL, CORE_DLL, w, h))
             self._sessions[key] = handle
         return self._sessions[key]
 
