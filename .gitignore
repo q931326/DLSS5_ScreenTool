@@ -1,0 +1,17 @@
+# Large runtime DLL - auto-located at runtime
+runtime/
+
+# Local Python venv
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Processed outputs
+*_dlss.png
+*_dlss.mp4
+
+# OS
+Thumbs.db
+.DS_Store
