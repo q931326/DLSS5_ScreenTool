@@ -4,8 +4,9 @@
 
 ```
 启动方式: 双击 DLSS5_ScreenTool.bat   或   python DLSS5_ScreenTool.py
+缺少dll文件，runtime/ —— nvngx_dlssnr.dll 有 165MB，超过 GitHub 单文件 100MB 硬限制，推上去会被直接拒绝；
 ```
-runtime/ —— nvngx_dlssnr.dll 有 165MB，超过 GitHub 单文件 100MB 硬限制，推上去会被直接拒绝；
+
 ---
 
 ## 一、它是什么
